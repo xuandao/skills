@@ -29,9 +29,9 @@ fi
 git add -A
 
 # 提交
-git commit -m "Sync skills from workspace ($(date +%Y-%m-%d %H:%M:%S))"
+git commit -m "Sync skills from workspace ($(date '+%Y-%m-%d %H:%M:%S'))"
 
-# 推送
-git push origin main
+# 推送（使用强制推送，因为这是同步操作，本地是数据源）
+git push -f origin main
 
 echo "✅ 同步完成并推送到远程"
