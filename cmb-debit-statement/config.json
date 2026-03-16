@@ -1,0 +1,42 @@
+{
+  "name": "cmb-debit-statement",
+  "version": "1.3.0",
+  "description": "招商银行一卡通账户变动通知解析工具，自动从 Gmail 拉取一卡通账户变动通知邮件，解析交易记录并生成账单到 Obsidian",
+  "entryPoint": "scripts/cmb-debit-auto-analysis.py",
+  "dependencies": [
+    "gws",
+    "python3"
+  ],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "days": {
+        "type": "integer",
+        "description": "查询最近多少天的邮件",
+        "default": 7
+      },
+      "period": {
+        "type": "string",
+        "enum": ["day", "week", "month"],
+        "description": "统计周期",
+        "default": "week"
+      },
+      "outputDir": {
+        "type": "string",
+        "description": "输出目录路径",
+        "default": "~/Library/Mobile Documents/iCloud~md~obsidian/Documents/No.7/Areas/理财/招商银行"
+      },
+      "accountFilter": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "账户过滤列表（只处理指定尾号的账户）",
+        "default": []
+      }
+    }
+  },
+  "tags": ["finance", "banking", "statement", "cmb", "debit", "analysis"],
+  "author": "OpenClaw",
+  "license": "MIT"
+}

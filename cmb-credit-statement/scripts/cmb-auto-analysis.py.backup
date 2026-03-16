@@ -1,0 +1,358 @@
+#!/usr/bin/env python3
+"""
+招商银行信用卡账单自动分析工具
+解析无附件账单（HTML正文），生成分析报告到 Obsidian
+"""
+
+import json
+import subprocess
+import base64
+import re
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Optional
+from collections import defaultdict
+
+# ============ 配置 ============
+CONFIG = {
+    # Gmail 查询条件（只查询信用卡账单，不要综合对账单）
+    "gmail_query": "(from:招商银行 OR from:cmbchina.com) subject:信用卡电子账单 newer_than:90d",
+    "obsidian_dir": Path.home() / "Library/Mobile Documents/iCloud~md~obsidian/Documents/No.7/Areas/理财/招商银行",
+}
+
+# 消费分类关键词
+CATEGORY_KEYWORDS = {
+    "餐饮": ["餐", "饭", "食", "咖啡", "茶", "酒", "美团", "饿了么", "肯德基", "麦当劳", "星巴克", "霸王茶姬", "赛百味", "外婆家", "莜面村", "瑞幸", "茵赫", "迈志豪"],
+    "购物": ["超市", "商场", "淘宝", "京东", "拼多多", "天猫", "苹果", "小米", "华为", "沃尔玛", "罗森", "新宇", "便利", "小红书", "乐高"],
+    "交通": ["滴滴", "出租", "地铁", "公交", "加油", "停车", "高速", "嘀嘀"],
+    "娱乐": ["电影", "游戏", "健身", "KTV", "酒吧", "旅游", "乐高", "智乐鼓"],
+    "生活": ["水电", "物业", "话费", "宽带", "医疗", "药店", "供电", "电信", "燃气", "水费", "电费", "阿里云"],
+    "其他": []
+}
+
+
+def run_gws(api_path: str, params: Dict) -> Dict:
+    """调用 gws 命令"""
+    cmd = ["gws"] + api_path.split() + ["--params", json.dumps(params)]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise Exception(f"gws 命令失败: {result.stderr}")
+    return json.loads(result.stdout)
+
+
+def extract_email_body(payload: Dict) -> Optional[str]:
+    """递归提取邮件HTML正文"""
+    if 'body' in payload and payload['body'].get('data'):
+        return base64.urlsafe_b64decode(payload['body']['data']).decode('utf-8', errors='ignore')
+    
+    if 'parts' in payload:
+        for part in payload['parts']:
+            # 查找 text/html
+            if part.get('mimeType') == 'text/html':
+                if part.get('body', {}).get('data'):
+                    return base64.urlsafe_b64decode(part['body']['data']).decode('utf-8', errors='ignore')
+            
+            # 递归查找
+            if 'parts' in part:
+                result = extract_email_body(part)
+                if result:
+                    return result
+    
+    return None
+
+
+def parse_html_statement(html_text: str) -> Dict:
+    """解析HTML格式的账单"""
+    data = {
+        "statement_date": None,
+        "due_date": None,
+        "credit_limit": None,
+        "new_balance": None,
+        "min_payment": None,
+        "transactions": []
+    }
+    
+    # 提取账单月份
+    match = re.search(r"(\d{4})年(\d{2})月信用卡账单", html_text)
+    if match:
+        data["statement_date"] = f"{match.group(1)}年{match.group(2)}月"
+    
+    # 提取到期还款日
+    match = re.search(r"最后还款日.*?(\d{2})月(\d{2})日", html_text, re.DOTALL)
+    if match:
+        # 推断年份
+        month = int(match.group(1))
+        current_year = datetime.now().year
+        year = current_year if month >= datetime.now().month else current_year + 1
+        data["due_date"] = f"{year}年{match.group(1)}月{match.group(2)}日"
+    
+    # 提取信用额度
+    match = re.search(r"信用额度.*?&yen;\s*([\d,]+\.\d{2})", html_text, re.DOTALL)
+    if match:
+        data["credit_limit"] = float(match.group(1).replace(",", ""))
+    
+    # 提取本期应还金额
+    match = re.search(r"本期应还金额.*?&yen;\s*([\d,]+\.\d{2})", html_text, re.DOTALL)
+    if match:
+        data["new_balance"] = float(match.group(1).replace(",", ""))
+    
+    # 提取最低还款额
+    match = re.search(r"本期最低还款额.*?&yen;\s*([\d,]+\.\d{2})", html_text, re.DOTALL)
+    if match:
+        data["min_payment"] = float(match.group(1).replace(",", ""))
+    
+    # 提取交易记录
+    # HTML中的交易记录在FONT标签中，格式：日期、日期、描述、金额、卡号、金额
+    font_pattern = r'<FONT[^>]*>([^<]*)</FONT>'
+    all_fonts = re.findall(font_pattern, html_text)
+    
+    i = 0
+    while i < len(all_fonts) - 5:
+        # 检查是否是交易记录行（第一个是4位数字日期MMDD）
+        if re.match(r'^\d{4}$', all_fonts[i]):
+            trans_date = all_fonts[i]
+            post_date = all_fonts[i+1] if re.match(r'^\d{4}$', all_fonts[i+1]) else ""
+            desc = all_fonts[i+2]
+            amount = all_fonts[i+3].replace('&yen;&nbsp;', '').replace('¥ ', '').strip()
+            card = all_fonts[i+4]
+            
+            # 验证金额和卡号格式
+            if re.match(r'^[-\d,]+\.\d{2}$', amount) and re.match(r'^\d{4}$', card):
+                data["transactions"].append({
+                    "date": f"{trans_date[:2]}/{trans_date[2:]}",
+                    "description": desc,
+                    "amount": float(amount.replace(",", "")),
+                    "card": card
+                })
+                i += 6
+            else:
+                i += 1
+        else:
+            i += 1
+    
+    return data
+
+
+def fetch_latest_statement() -> Optional[Dict]:
+    """从 Gmail 获取最新的账单邮件"""
+    print("🔍 查询 Gmail 中的招商银行账单...")
+    
+    result = run_gws("gmail users messages list", {
+        "userId": "me",
+        "q": CONFIG["gmail_query"],
+        "maxResults": 1
+    })
+    
+    messages = result.get("messages", [])
+    if not messages:
+        print("❌ 未找到账单邮件")
+        return None
+    
+    msg_id = messages[0]["id"]
+    print(f"✅ 找到账单邮件: {msg_id}")
+    
+    # 获取邮件详情
+    msg_data = run_gws("gmail users messages get", {
+        "userId": "me",
+        "id": msg_id
+    })
+    
+    return msg_data
+
+
+def categorize_transactions(transactions: List[Dict]) -> Dict[str, List[Dict]]:
+    """对交易进行分类"""
+    categorized = {cat: [] for cat in CATEGORY_KEYWORDS.keys()}
+    
+    for trans in transactions:
+        desc = trans["description"]
+        matched = False
+        
+        for category, keywords in CATEGORY_KEYWORDS.items():
+            if category == "其他":
+                continue
+            if any(kw in desc for kw in keywords):
+                categorized[category].append(trans)
+                matched = True
+                break
+        
+        if not matched:
+            categorized["其他"].append(trans)
+    
+    return categorized
+
+
+def generate_report(data: Dict, source_info: str) -> str:
+    """生成 Markdown 分析报告"""
+    report = f"# 招商银行信用卡账单分析\n\n"
+    report += f"**数据来源**: {source_info}\n"
+    report += f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+    
+    report += "---\n\n"
+    
+    # 账单概况
+    report += "## 📅 账单概况\n\n"
+    report += f"- **账单月份**: {data['statement_date'] or 'N/A'}\n"
+    report += f"- **到期还款日**: {data['due_date'] or 'N/A'}\n"
+    report += f"- **信用额度**: ¥ {data['credit_limit']:,.2f}\n" if data['credit_limit'] else "- **信用额度**: N/A\n"
+    report += f"- **本期应还**: ¥ {data['new_balance']:,.2f}\n" if data['new_balance'] else "- **本期应还**: N/A\n"
+    report += f"- **最低还款**: ¥ {data['min_payment']:,.2f}\n\n" if data['min_payment'] else "- **最低还款**: N/A\n\n"
+    
+    if data['credit_limit'] and data['new_balance']:
+        usage_rate = (data['new_balance'] / data['credit_limit']) * 100
+        report += f"- **额度使用率**: {usage_rate:.1f}%\n\n"
+    
+    # 按卡号统计
+    card_stats = defaultdict(lambda: {"count": 0, "spending": 0, "payment": 0, "net": 0})
+    
+    for trans in data["transactions"]:
+        card = trans["card"]
+        amount = trans["amount"]
+        card_stats[card]["count"] += 1
+        if amount > 0:
+            card_stats[card]["spending"] += amount
+        else:
+            card_stats[card]["payment"] += amount
+        card_stats[card]["net"] += amount
+    
+    report += "### 💳 分卡消费统计\n\n"
+    report += "| 卡号 | 交易笔数 | 消费金额 | 还款金额 | 净消费 |\n"
+    report += "|------|----------|----------|----------|--------|\n"
+    
+    for card in sorted(card_stats.keys()):
+        stats = card_stats[card]
+        report += f"| {card} | {stats['count']} | ¥ {stats['spending']:,.2f} | ¥ {stats['payment']:,.2f} | ¥ {stats['net']:,.2f} |\n"
+    
+    total_spending = sum(t['amount'] for t in data['transactions'] if t['amount'] > 0)
+    total_payment = sum(t['amount'] for t in data['transactions'] if t['amount'] < 0)
+    
+    report += f"\n**汇总**: 总消费 ¥ {total_spending:,.2f} | 总还款 ¥ {total_payment:,.2f} | 净消费 ¥ {total_spending + total_payment:,.2f}\n\n"
+    
+    # 消费分类统计
+    categorized = categorize_transactions(data['transactions'])
+    
+    report += "## 💰 消费分类统计\n\n"
+    report += "| 分类 | 笔数 | 金额 | 占比 |\n"
+    report += "|------|------|------|------|\n"
+    
+    for category, trans_list in categorized.items():
+        if not trans_list:
+            continue
+        count = len(trans_list)
+        amount = sum(t['amount'] for t in trans_list)
+        percentage = (amount / total_spending * 100) if total_spending > 0 else 0
+        report += f"| {category} | {count} | ¥ {amount:,.2f} | {percentage:.1f}% |\n"
+    
+    report += f"\n**总消费**: ¥ {total_spending:,.2f}\n\n"
+    
+    # 详细交易记录
+    report += "## 📝 交易明细\n\n"
+    
+    for category, trans_list in categorized.items():
+        if not trans_list:
+            continue
+        
+        report += f"### {category}\n\n"
+        report += "| 日期 | 描述 | 金额 | 卡号 |\n"
+        report += "|------|------|------|------|\n"
+        
+        for trans in sorted(trans_list, key=lambda x: x['date']):
+            report += f"| {trans['date']} | {trans['description']} | ¥ {trans['amount']:,.2f} | {trans['card']} |\n"
+        
+        report += "\n"
+    
+    # 消费建议
+    report += "## 💡 消费建议\n\n"
+    
+    if data['credit_limit'] and data['new_balance']:
+        usage_rate = (data['new_balance'] / data['credit_limit']) * 100
+        if usage_rate > 80:
+            report += "⚠️ **额度使用率较高**，建议及时还款，避免影响信用评分。\n\n"
+    
+    # 找出消费最多的分类
+    max_category = max(categorized.items(), key=lambda x: sum(t['amount'] for t in x[1]))
+    if max_category[1]:
+        cat_name = max_category[0]
+        cat_amount = sum(t['amount'] for t in max_category[1])
+        report += f"📊 本期 **{cat_name}** 消费最多，共 ¥ {cat_amount:,.2f}，占总消费的 {(cat_amount/total_spending*100):.1f}%\n\n"
+    
+    return report
+
+
+def save_to_obsidian(report: str, year_month: str) -> Path:
+    """保存报告到 Obsidian"""
+    CONFIG["obsidian_dir"].mkdir(parents=True, exist_ok=True)
+    
+    filename = f"{year_month}-信用卡账单分析.md"
+    output_path = CONFIG["obsidian_dir"] / filename
+    
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(report)
+    
+    print(f"✅ 报告已保存: {output_path}")
+    return output_path
+
+
+def main():
+    """主流程"""
+    try:
+        # 1. 从 Gmail 获取最新账单
+        msg_data = fetch_latest_statement()
+        if not msg_data:
+            return
+        
+        headers = {h['name']: h['value'] for h in msg_data['payload']['headers']}
+        subject = headers.get('Subject', '')
+        
+        # 2. 提取HTML正文
+        print("📧 提取邮件正文...")
+        html_body = extract_email_body(msg_data['payload'])
+        if not html_body:
+            print("❌ 无法提取邮件正文")
+            return
+        
+        # 3. 解析HTML账单
+        print("📄 解析HTML账单...")
+        data = parse_html_statement(html_body)
+        source_info = "邮件正文（HTML）"
+        
+        print(f"✅ 解析完成: 找到 {len(data['transactions'])} 笔交易")
+        
+        if len(data['transactions']) == 0:
+            print("⚠️  未找到交易记录，可能账单格式不支持")
+            return
+        
+        # 4. 生成报告
+        report = generate_report(data, source_info)
+        
+        # 5. 推断年月
+        year_month = None
+        match = re.search(r"(\d{4})年(\d{2})月", subject)
+        if match:
+            year_month = f"{match.group(1)}{match.group(2)}"
+        elif data['statement_date']:
+            match = re.search(r"(\d{4})年(\d{2})月", data['statement_date'])
+            if match:
+                year_month = f"{match.group(1)}{match.group(2)}"
+        
+        if not year_month:
+            year_month = datetime.now().strftime("%Y%m")
+        
+        # 6. 保存到 Obsidian
+        output_path = save_to_obsidian(report, year_month)
+        
+        print("\n" + "="*60)
+        print("✅ 账单分析完成！")
+        print(f"📊 报告位置: {output_path}")
+        print(f"📈 交易笔数: {len(data['transactions'])}")
+        print(f"💰 总消费: ¥ {sum(t['amount'] for t in data['transactions'] if t['amount'] > 0):,.2f}")
+        print("="*60)
+        
+    except Exception as e:
+        print(f"\n❌ 错误: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+if __name__ == "__main__":
+    main()
