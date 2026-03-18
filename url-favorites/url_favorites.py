@@ -33,7 +33,6 @@ def slugify(text: str) -> str:
 def get_page_content(url: str) -> Tuple[Optional[str], Optional[str], List[str]]:
     """
     Fetch page content and extract images using browser snapshot approach
-    This simulates what the browser(snapshot) tool would do
     Returns: (markdown_content, page_title, image_urls)
     """
     try:
@@ -50,35 +49,58 @@ def get_page_content(url: str) -> Tuple[Optional[str], Optional[str], List[str]]
         title_tag = soup.find('title')
         title = title_tag.get_text().strip() if title_tag else urlparse(url).netloc
 
-        # Extract all image URLs from the page
+        # Pre-process image tags to ensure we have the best source and absolute URLs
         img_tags = soup.find_all('img')
         image_urls = []
 
         for img in img_tags:
-            src = img.get('src') or img.get('data-src') or img.get('data-lazy-src')
+            # Try to find the real image source (handling lazy loading)
+            src = (
+                img.get('data-src') or 
+                img.get('data-lazy-src') or 
+                img.get('data-original') or
+                img.get('src')
+            )
+            
             if src:
-                # Skip data URLs and javascript:void(0) type placeholders
                 if src.startswith('data:') or src.startswith('javascript:') or src.strip() == '':
                     continue
+                
                 full_url = urljoin(url, src)
                 image_urls.append(full_url)
+                # Update the src attribute in the soup so html2text uses the absolute URL
+                img['src'] = full_url
 
-        # Get the main content (try to extract main content areas)
-        main_content = soup.find('main') or soup.find('article') or soup.find('div', class_='content') or soup
+        # Get the main content
+        main_content = (
+            soup.find('main') or 
+            soup.find('article') or 
+            soup.find('div', class_='content') or 
+            soup.find('div', id='content') or 
+            soup.find('div', role='main') or 
+            soup.find('div', class_='post-content') or
+            soup.find('div', class_='entry-content') or
+            soup
+        )
 
         # Convert HTML to markdown
         h = html2text.HTML2Text()
-        h.ignore_links = False  # Keep links
-        h.body_width = 0  # Don't wrap lines
-        h.ignore_images = False  # Keep images
-
-        # Get HTML content
-        html_content = str(main_content)
+        h.ignore_links = False
+        h.body_width = 0
+        h.ignore_images = False
+        h.protect_links = True
+        h.unicode_snob = True
+        h.wrap_links = False
+        h.pad_tables = True
+        h.mark_code = True
+        h.ignore_emphasis = False
+        h.bypass_tables = False
+        h.escape_snob = True
 
         # Convert to markdown
-        markdown_content = h.handle(html_content)
+        markdown_content = h.handle(str(main_content))
 
-        return markdown_content, title, image_urls
+        return markdown_content, title, list(set(image_urls))  # Deduplicate
 
     except Exception as e:
         print(f"Error fetching page content: {e}")
@@ -157,50 +179,28 @@ def download_images(image_urls: List[str], dest_dir: Path) -> Dict[str, Path]:
 
     return downloaded_files
 
-def update_markdown_references(markdown_content: str, image_mapping: Dict[str, Path]) -> str:
+def update_markdown_references(markdown_content: str, image_mapping: Dict[str, Path], rel_path: str = "") -> str:
     """
     Update markdown content to reference local images instead of URLs
     """
     updated_content = markdown_content
+    from urllib.parse import quote
 
     for original_url, local_path in image_mapping.items():
-        # Find the image reference in markdown and replace with local path
-        # This handles both HTML img tags and markdown ![]() syntax
-
-        # Get just the filename for the replacement
+        # Get the final path to use in markdown
         local_filename = local_path.name
-
-        # Extract the path portion of the original URL for matching in markdown
-        parsed_url = urlparse(original_url)
-        image_path = parsed_url.path  # e.g., /portal/wikipedia.org/assets/img/Wikipedia-logo-v2.png
-
-        # Remove leading slash if present for comparison
-        if image_path.startswith('/'):
-            image_path = image_path[1:]
+        final_markdown_path = os.path.join(rel_path, local_filename) if rel_path else local_filename
 
         # Replace markdown-style image references: ![alt text](full-url)
-        updated_content = updated_content.replace(
-            f']({original_url})',
-            f']({local_filename})'
-        )
+        # We also handle URL encoded versions because html2text might encode them
+        encoded_url = quote(original_url, safe=':/')
 
-        # Replace markdown-style image references: ![alt text](relative-path)
-        updated_content = updated_content.replace(
-            f']({image_path})',
-            f']({local_filename})'
-        )
+        updated_content = updated_content.replace(f'({original_url})', f'({final_markdown_path})')
+        updated_content = updated_content.replace(f'({encoded_url})', f'({final_markdown_path})')
 
-        # Replace direct URL occurrences that might be in the content
-        updated_content = updated_content.replace(
-            original_url,
-            local_filename
-        )
-
-        # Replace path occurrences in the content
-        updated_content = updated_content.replace(
-            image_path,
-            local_filename
-        )
+        # Also replace HTML-style src attributes if any
+        updated_content = updated_content.replace(f'src="{original_url}"', f'src="{final_markdown_path}"')
+        updated_content = updated_content.replace(f'src="{encoded_url}"', f'src="{final_markdown_path}"')
 
     return updated_content
 
@@ -221,16 +221,21 @@ def detect_language_and_translate(text: str, title: str) -> Tuple[str, str]:
 
 def create_note_content(title: str, url: str, markdown_content: str, author: Optional[str] = None, publish_date: Optional[str] = None) -> str:
     """
-    Create the final note content with proper formatting
+    Create the final note content with proper formatting, ensuring full content is preserved.
     """
     today = datetime.now().strftime("%Y-%m-%d")
 
-    # Detect content richness to decide template
+    # Generate a summary (first 500 chars) for the top section
+    summary_limit = 500
+    summary = markdown_content[:summary_limit].strip()
+    if len(markdown_content) > summary_limit:
+        summary += "..."
+
+    # Detection for rich content format
     content_words = len(markdown_content.split())
-    is_detailed_article = content_words > 300  # Arbitrary threshold
+    is_detailed_article = content_words > 300
 
     if is_detailed_article:
-        # Use detailed article template
         note_content = f"""---
 date: {today}
 source: {url}
@@ -240,20 +245,20 @@ tags: [收藏夹]
 
 # {title}
 
-## 核心观点
-
-{markdown_content[:500]}...
-
-## 关键要点
-
-- 主要内容已归档到此笔记中
-- 查看原文: [{url}]({url})
+## 摘要
+> {summary}
 
 ---
 
-*收藏时间：{datetime.now().strftime("%Y-%m-%d %H:%M")}*"""
+## 核心内容
+
+{markdown_content}
+
+---
+
+*收藏时间：{datetime.now().strftime("%Y-%m-%d %H:%M")}*
+*原文链接: [{url}]({url})*"""
     else:
-        # Use standard template
         note_content = f"""---
 date: {today}
 source: {url}
@@ -264,12 +269,12 @@ tags: [收藏夹]
 # {title}
 
 **来源**: {url}
-
 **作者**: {author or '未知'}
-
 **发布时间**: {publish_date or '未知'}
 
-> {markdown_content[:300]}...
+---
+
+{markdown_content}
 
 ---
 
@@ -321,7 +326,9 @@ def main():
 
     # Update markdown content to reference local images
     if image_mapping:
-        markdown_content = update_markdown_references(markdown_content, image_mapping)
+        # Calculate relative path from output_dir to page_resources_dir
+        rel_resources_path = os.path.relpath(page_resources_dir, output_dir)
+        markdown_content = update_markdown_references(markdown_content, image_mapping, rel_resources_path)
 
     # Create note content
     note_content = create_note_content(title, url, markdown_content)
