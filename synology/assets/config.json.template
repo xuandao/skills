@@ -1,0 +1,5 @@
+{
+  "nas_url": "http://your-nas-ip:5000",
+  "username": "your-download-station-user",
+  "password": "your-password"
+}

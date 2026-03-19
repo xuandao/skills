@@ -59,47 +59,51 @@ def get_unfinished_tasks(yesterday_str):
     if os.path.exists(yesterday_path):
         with open(yesterday_path, 'r', encoding='utf-8') as f:
             lines = f.readlines()
-            # We look for tasks (- [ ]) but NOT those marked done
-            # Also need to be careful with subtasks or indentation
             for line in lines:
+                # We look for tasks (- [ ]) but NOT those marked done
                 if line.strip().startswith("- [ ]") and "📅" in line:
-                    # Capture the task but maybe remove/update the date tag if needed
-                    # For simplicity, we just take the line as is
                     tasks.append(line.rstrip())
     return tasks
 
 def create_today_note(today_str, weekday_str, unfinished_tasks):
     today_path = os.path.join(DAILY_FOLDER, f"{today_str}.md")
     if os.path.exists(today_path):
-        # Already exists, we might want to append tasks if not there, 
-        # but the request says "Create today's Daily Note"
-        # Let's read it to avoid duplication if it exists
         with open(today_path, 'r', encoding='utf-8') as f:
             content = f.read()
     else:
-        with open(TEMPLATE_PATH, 'r', encoding='utf-8') as f:
-            template = f.read()
+        if os.path.exists(TEMPLATE_PATH):
+            with open(TEMPLATE_PATH, 'r', encoding='utf-8') as f:
+                template = f.read()
+        else:
+            template = "## 📋 今日待办\n\n"
         
         content = template.replace("{{date:YYYY-MM-DD}}", today_str)
         content = content.replace("{{date:dddd}}", weekday_str)
 
     # Insert unfinished tasks if any
     if unfinished_tasks:
-        # Find the "## 📋 今日待办" or "## 今日待办" section
         section_pattern = r"(## 📋 今日待办|## 今日待办)"
         match = re.search(section_pattern, content)
         if match:
             header = match.group(0)
-            # Find where the next section starts or end of file
-            parts = re.split(section_pattern, content)
-            # parts[0] is before header, parts[1] is header, parts[2] is after header
             
-            # Check if these tasks are already in the note
-            existing_tasks = set(re.findall(r"- \[ \] .*", content))
-            new_tasks_to_add = [t for t in unfinished_tasks if t not in existing_tasks]
+            # Helper to normalize task for comparison (remove date tags like 📅 2026-03-19)
+            def normalize(t):
+                return re.sub(r"📅 \d{4}-\d{2}-\d{2}", "", t).strip()
+
+            existing_tasks_raw = re.findall(r"- \[ \] .*", content)
+            existing_normalized = {normalize(t) for t in existing_tasks_raw}
+            
+            new_tasks_to_add = []
+            for t in unfinished_tasks:
+                norm_t = normalize(t)
+                if norm_t not in existing_normalized:
+                    # Update date tag to today if needed, or just keep it
+                    # User wanted to avoid same tasks, so we keep content but avoid duplicate entries
+                    new_tasks_to_add.append(t)
+                    existing_normalized.add(norm_t) # Avoid duplicates within the new list too
             
             if new_tasks_to_add:
-                # Insert after the header
                 header_pos = content.find(header) + len(header)
                 content = content[:header_pos] + "\n" + "\n".join(new_tasks_to_add) + content[header_pos:]
 
@@ -116,7 +120,6 @@ def get_openclaw_summary():
             jobs = data.get("jobs", [])
             total_jobs = len(jobs)
             enabled_jobs = sum(1 for j in jobs if j.get("enabled"))
-            # Check for errors in state
             errors = []
             for j in jobs:
                 state = j.get("state", {})
@@ -125,25 +128,30 @@ def get_openclaw_summary():
     except Exception:
         total_jobs, enabled_jobs, errors = 0, 0, []
 
-    # Tokens / Status via CLI
+    # Tokens consumption (Last 24h)
+    daily_tokens = 0
     try:
-        result = subprocess.run(["openclaw", "status"], capture_output=True, text=True)
-        status_output = result.stdout
-        # Basic parsing for active sessions/tokens if possible
-        # Or just include the summary line
-        token_line = "Tokens: (Check openclaw status for details)"
-        for line in status_output.split('\n'):
-            if "Sessions" in line and "active" in line:
-                token_line = line.strip()
-                break
+        # Use --all-agents to get everything, --active 1440 for last 24h
+        result = subprocess.run(["openclaw", "sessions", "--all-agents", "--active", "1440", "--json"], capture_output=True, text=True)
+        if result.returncode == 0:
+            session_data = json.loads(result.stdout)
+            for sess in session_data.get("sessions", []):
+                # Summing input + output tokens as consumption
+                # Fallback to totalTokens if available
+                it = sess.get("inputTokens") or 0
+                ot = sess.get("outputTokens") or 0
+                if it + ot > 0:
+                    daily_tokens += (it + ot)
+                else:
+                    daily_tokens += (sess.get("totalTokens") or 0)
     except Exception:
-        token_line = "Unable to fetch openclaw status"
+        pass
 
     return {
         "total": total_jobs,
         "enabled": enabled_jobs,
         "errors": errors,
-        "tokens": token_line
+        "daily_tokens": daily_tokens
     }
 
 # 4. Recent Favorites

@@ -24,9 +24,11 @@ def main():
 要求：
 1. 包含一句励志的古诗词（带作者）。
 2. 包含 3 条历史上的今天（{data['today']}）发生的重大事件。
-3. 汇总 openClaw 系统状态。
+3. 汇总 openClaw 系统状态，**必须包含当日消耗 Token 数：{data['oc_status']['daily_tokens']}**。
 4. 列出最近收藏的 3 篇文章及其摘要。
 5. 提及今日已归档 {data['archived']} 篇旧笔记，并从昨日继承了 {data['tasks_migrated']} 项任务。
+
+**注意：仅发送晨报内容，不要包含任何“发送成功”、“任务完成”等确认信息。**
 
 数据如下：
 {json.dumps(data, ensure_ascii=False, indent=2)}
