@@ -1,67 +1,58 @@
 ---
 name: daily-summary
-description: 每日总结助手。自动归档旧笔记、创建今日 Daily Note、继承未完成待办，并汇总 openClaw 状态与最近收藏，通过 Telegram 推送每日简报。
+description: 每日深度总结与行动指南。自动执行 Daily 维护，并由 Agent 自主分析知识库动态，生成智能建议。
 ---
 
-# 每日总结技能 (Daily Summary)
+# 每日深度总结技能 (Daily Summary Agentic Workflow)
 
-该技能旨在自动化每日的 Obsidian 笔记维护及信息同步流程。
-
-## 核心功能
-
-1.  **Obsidian 笔记管理**:
-    *   **归档**: 自动将 `Projects/Daily` 目录中早于 7 天前的笔记移动至 `Archive/Daily`。
-    *   **建档**: 使用 `Resources/Templates/daily-template.md` 创建今日笔记（如果尚未创建）。
-    *   **迁移**: 从昨日笔记中提取未完成的待办事项（带有 `- [ ]` 且包含日期标签 `📅` 的行），自动添加到今日笔记中。
-2.  **系统与知识汇总**:
-    *   **openClaw 状态**: 统计定时任务总数、启用数、错误状态及当前 Token 消耗。
-    *   **收藏回顾**: 提取 `Resources/收藏夹` 中最新的 3 篇笔记标题与摘要。
-    *   **每日灵感**: 自动生成一句古诗词及 3 条“历史上的今天”。
-3.  **Telegram 推送**:
-    *   汇总上述所有信息，通过 Telegram 发送精美的“每日晨报”。
+该技能采用 **Agentic Workflow** 模式。脚本仅负责最基础的文件维护，所有的分析、总结、日程安排及研究建议均由 Agent 直接读取知识库内容后自主生成。
 
 ## 运行方式
 
-该技能通过 openClaw 的 Cron 插件定时触发。
+通过 openClaw 的 Cron 插件定时触发，或直接对 Agent 下令。
 
-### 触发指令示例
-"执行每日总结任务"
+### 触发指令
+"执行每日深度总结任务"
 
-### 脚本位置
-`/Users/xuandao/.openclaw/workspace/skills/daily-summary/scripts/daily_manager.py`
+## Agent 执行指南 (指令规则)
 
-## 配置说明
+当收到执行指令时，Agent **必须** 严格按照以下步骤自主完成任务：
 
-- **Obsidian 根目录**: `/Users/xuandao/Library/Mobile Documents/iCloud~md~obsidian/Documents/No.7`
-- **每日笔记目录**: `Projects/Daily`
-- **归档目录**: `Archive/Daily`
-- **收藏夹目录**: `Resources/收藏夹`
-- **模板文件**: `Resources/Templates/daily-template.md`
+### 1. 基础维护 (基础动作)
+- 运行 `scripts/daily_manager.py`。
+- 获取输出中的 `today_note_path` (今日笔记路径) 和 `obsidian_root` (库根目录)。
 
-## 简报模板 (Telegram)
+### 2. 知识获取 (自主阅读)
+- **获取动态**: 使用 `run_shell_command` 在 `obsidian_root` 中运行 `find . -name "*.md" -mtime -3`，找出近 3 天修改的文件。
+- **深度阅读**: 使用 `read_file` 阅读上述文件的内容（优先阅读最近修改的 5-10 篇）。
+- **获取收藏**: 阅读 `Resources/收藏夹` 目录下最新的 1-2 篇笔记。
+- **系统状态**: 运行 `openclaw sessions --all-agents --active 1440 --json` 获取过去 24 小时的 Token 消耗。
 
-```markdown
-# 🌅 每日简报 | {{today}}
+### 3. 智能分析与生成 (逻辑核心)
+Agent 需根据读到的内容，自主生成以下两个部分：
 
-## 🌟 晨间灵感
-> {{poem}}
-> —— {{poem_author}}
+#### [部分 A：Telegram 极简简报]
+- **要求**: 极其简洁，总长度 < 200 字。
+- **包含**: 🌟 晨间灵感（一句诗）、📅 核心日程（1-3点建议）、🤖 系统消耗、📚 1条核心收藏。
+- **结尾**: 提示“详细深度洞察已同步至 Daily 笔记”。
+- **发送**: 通过 Telegram 推送到目标 ID (5247154884)。
 
-### 📜 历史上的今天
-- {{history_event_1}}
-- {{history_event_2}}
-- {{history_event_3}}
+#### [部分 B：Daily 深度洞察]
+- **要求**: 专业、深刻。
+- **内容**: 
+    - **近 3 日动态回顾**: 梳理最近关注的重点 (Focus)、新想法 (Ideas) 和心得 (Insights)。
+    - **任务分析**: 结合昨日遗留任务与笔记内容，提供今日重点推进事项的深度分析。
+    - **调研建议**: 提供 2-3 条开放性的思维建议或前瞻性方案调研思路。
+- **写入**: 将此部分内容以 `## 🧠 AI 深度洞察与调研建议` 为标题，**追加 (Append)** 到 `today_note_path` 文件的末尾。
 
-## 🤖 系统状态 (openClaw)
-- 任务总数: {{oc_total}} (启用: {{oc_enabled}})
-- 健康状况: {{oc_health}}
-- 资源消耗: {{oc_tokens}}
+## 配置说明 (config.json)
 
-## 📚 最近收藏
-- {{fav_1_title}}: {{fav_1_summary}}
-- ...
+- **OBSIDIAN_ROOT**: Obsidian 库的绝对路径。
+- **DAILY_FOLDER**: 每日笔记相对路径。
+- **ARCHIVE_FOLDER**: 归档相对路径。
+- **TEMPLATE_PATH**: 每日笔记模板路径。
 
-## 📋 任务概况
-- 今日已归档 {{archived_count}} 篇旧笔记。
-- 从昨日继承了 {{migrated_count}} 项待办任务。
-```
+## 注意事项
+- Agent 必须保持专业、前瞻性的口吻。
+- 严禁在 Telegram 发送长篇大论。
+- 所有的“研讨性、分析性”内容必须留在 Daily 笔记中，保持手机端的清爽。
