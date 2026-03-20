@@ -1,10 +1,10 @@
 {
-  "OBSIDIAN_ROOT": "/Users/xuandaooo/work/xuandao/obsidian",
+  "OBSIDIAN_ROOT": "/Users/xuandao/Library/Mobile Documents/iCloud~md~obsidian/Documents/No.7",
   "DAILY_FOLDER": "Projects/Daily",
   "ARCHIVE_FOLDER": "Archive/Daily",
   "TEMPLATE_PATH": "Resources/Templates/daily-template.md",
   "FAVORITES_FOLDER": "Resources/收藏夹",
-  "OPENCLAW_CONFIG": "/Users/xuandaooo/.openclaw/openclaw.json",
-  "OPENCLAW_CRON_JOBS": "/Users/xuandaooo/.openclaw/cron/jobs.json",
+  "OPENCLAW_CONFIG": "/Users/xuandao/.openclaw/openclaw.json",
+  "OPENCLAW_CRON_JOBS": "/Users/xuandao/.openclaw/cron/jobs.json",
   "EXCLUDE_FOLDERS": ["Archive", ".obsidian", ".trash"]
 }
