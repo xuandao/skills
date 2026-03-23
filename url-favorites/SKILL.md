@@ -10,11 +10,10 @@ description: 自动将用户发送的 URL、PDF 或 YouTube 视频收藏到 Obsi
 ## 1. 获取内容
 
 **URL 场景**：
-```bash
-browser(action=snapshot, url="<URL>", compact=true)
-```
-- 使用 `compact=true` 减少无关内容
-- 如果页面需要登录或 JavaScript 渲染失败，fallback 到 `web_fetch`
+- 优先使用 `r.jina.ai` (Jina Reader) 获取页面 Markdown 内容和图片链接
+- 如果 Jina 失败或返回内容不足，fallback 到本地 HTML 解析方案
+- 本地方案：使用 `requests` 获取 HTML，使用 `BeautifulSoup` 提取内容，使用 `html2text` 转换为 Markdown
+
 
 **PDF 场景**：
 - 下载 PDF 文件

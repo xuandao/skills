@@ -30,10 +30,61 @@ def slugify(text: str) -> str:
     text = '-'.join(text.split())
     return text
 
-def get_page_content(url: str) -> Tuple[Optional[str], Optional[str], List[str]]:
+def get_page_content_jina(url: str) -> Tuple[Optional[str], Optional[str], List[str]]:
     """
-    Fetch page content and extract images using browser snapshot approach
-    Returns: (markdown_content, page_title, image_urls)
+    Fetch page content using Jina Reader (r.jina.ai)
+    """
+    try:
+        jina_url = f"https://r.jina.ai/{url}"
+        print(f"Fetching from Jina: {jina_url}")
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        }
+        
+        # Jina can take a while for some complex pages
+        response = requests.get(jina_url, headers=headers, timeout=60)
+        response.raise_for_status()
+        
+        full_content = response.text
+        
+        # Parse Jina output
+        title = None
+        markdown_content = ""
+        
+        # Try to find title in Jina's header format
+        title_match = re.search(r'^Title: (.*)$', full_content, re.MULTILINE)
+        if title_match:
+            title = title_match.group(1).strip()
+            
+        content_start_marker = "Markdown Content:"
+        if content_start_marker in full_content:
+            markdown_content = full_content.split(content_start_marker, 1)[1].strip()
+        else:
+            # Fallback if marker not found - might be direct markdown
+            markdown_content = full_content
+            
+        if not title:
+            # Try to find title in markdown (H1)
+            h1_match = re.search(r'^# (.*)$', markdown_content, re.MULTILINE)
+            if h1_match:
+                title = h1_match.group(1).strip()
+            else:
+                title = urlparse(url).netloc
+
+        # Extract image URLs from markdown: ![alt](url)
+        # Jina uses markdown format.
+        image_urls = re.findall(r'!\[.*?\]\((https?://.*?)\)', markdown_content)
+        
+        return markdown_content, title, list(set(image_urls))
+
+    except Exception as e:
+        print(f"Jina fetch failed: {e}")
+        return None, None, []
+
+def get_page_content_legacy(url: str) -> Tuple[Optional[str], Optional[str], List[str]]:
+    """
+    Original HTML-based fetch method (fallback)
     """
     try:
         headers = {
@@ -103,8 +154,23 @@ def get_page_content(url: str) -> Tuple[Optional[str], Optional[str], List[str]]
         return markdown_content, title, list(set(image_urls))  # Deduplicate
 
     except Exception as e:
-        print(f"Error fetching page content: {e}")
+        print(f"Legacy fetch failed: {e}")
         return None, None, []
+
+def get_page_content(url: str) -> Tuple[Optional[str], Optional[str], List[str]]:
+    """
+    Fetch page content and extract images.
+    Tries Jina first, then falls back to legacy method.
+    """
+    # Try Jina first
+    markdown_content, title, image_urls = get_page_content_jina(url)
+    
+    if markdown_content and len(markdown_content) > 100:
+        print("Successfully fetched content using Jina")
+        return markdown_content, title, image_urls
+    
+    print("Jina failed or returned minimal content. Falling back to legacy method...")
+    return get_page_content_legacy(url)
 
 def download_image(image_url: str, dest_dir: Path) -> Optional[Path]:
     """

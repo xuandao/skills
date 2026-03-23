@@ -1,6 +1,6 @@
 ---
 name: obsidian-to-about
-description: 将 Obsidian 收藏夹同步到 about 项目（Next.js 博客）。扫描 Obsidian 的 Resources/收藏夹 目录，将新内容转换为 about 项目的 content/bookmarks 格式。
+description: 将 Obsidian 收藏夹同步到 about 项目（Next.js 博客）。遵循 BOOKMARK_RULES.md 规范，提取元数据并生成 AI 摘要格式。
 ---
 
 # Obsidian 到 About 同步技能
@@ -19,68 +19,38 @@ description: 将 Obsidian 收藏夹同步到 about 项目（Next.js 博客）。
 
 ### 收藏夹同步
 
-1. 扫描 Obsidian 收藏夹目录中的所有 `.md` 文件
-2. 提取文件名中的日期（格式：`YYYY-MM-DD-slug.md`）
-3. 检查目标目录是否已存在同名文件
-4. 如果不存在，转换格式并复制到 about 项目
+1. 扫描 Obsidian 收藏夹目录中的所有 `.md` 文件。
+2. 提取文件名或 frontmatter 中的日期（格式：`YYYY-MM-DD`）。
+3. 检查目标目录是否已存在同名文件。
+4. 如果不存在，按照 `BOOKMARK_RULES.md` 格式进行转换：
+   - **元数据映射**: `title` (标题), `url` (来源), `date` (日期), `tags` (标签数组), `description` (描述), `summary` (摘要)。
+   - **摘要提取**: 优先从 Obsidian 的 `summary` 字段提取，若无则尝试从正文的 `## 摘要` 或第一个引用块提取。
+   - **格式规范**: 使用标准 YAML frontmatter，`tags` 为 JSON 数组格式。
 
-**格式转换**:
+### 文件内容模板 (遵循 BOOKMARK_RULES.md)
 
-Obsidian 格式:
 ```markdown
 ---
 title: "文章标题"
-date: 2026-03-05
-tags: [AI, 认知科学]
-source: Harvard Business Review
-url: https://hbr.org/...
-authors: [作者名]
----
-
-# 文章标题
-
-> 原文 | 来源 | 日期
-> 作者: xxx
-
-正文内容...
-```
-
-About 项目格式:
-```markdown
----
-标题: 文章标题
-作者: 作者名
-来源: https://hbr.org/...
-日期: 2026-03-05
-标签: #AI #认知科学
+url: "原始链接"
+date: "YYYY-MM-DD"
+tags: ["标签1", "标签2"]
+description: "描述内容"
+summary: "AI 生成的精炼摘要"
 ---
 
 # 文章标题
 
 正文内容...
 ```
-
-### 文件名规则
-
-- 格式: `YYYY-MM-DD-slug.md`
-- slug: 小写字母、数字、连字符
-- 示例: `2026-03-06-para-method.md`
 
 ## 触发方式
 
 - Cron 定时任务调用（默认每天凌晨 2 点）
 - 手动执行：说"同步 Obsidian 到 about"
 
-## 实现步骤
-
-1. 读取 Obsidian 源目录文件列表
-2. 读取 about 目标目录文件列表
-3. 对比找出新增文件
-4. 转换格式（提取 frontmatter 元数据，转换为 about 格式）
-5. 写入目标目录
-6. 执行 git add、commit、push
-
 ## Git 提交
 
 - 提交信息: `sync(obsidian): 同步收藏夹 - YYYY-MM-DD HH:mm`
-- 自动推送到远程仓库
+- 自动拉取、提交并推送到远程仓库。
+
