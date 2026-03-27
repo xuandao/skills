@@ -55,8 +55,9 @@ description: 自动将用户发送的 URL、PDF 或 YouTube 视频收藏到 Obsi
 **数据存储结构**：
 ```
 Obsidian Vault/
-├── 收藏夹/                        # 收藏笔记位置
-│   └── YYYY-MM-DD-title.md
+├── Resources/                    # 资源目录
+│   └── 收藏夹/                   # 收藏笔记位置
+│       └── YYYY-MM-DD-title.md
 └── resources/                    # 存储各种资源
     └── 图库/                     # 存储图片资源
         └── YYYY-MM-DD-title/     # 按页面创建独立目录
@@ -145,12 +146,12 @@ Write(
 
 **示例**：
 ```
--o /Users/xuandao/Obsidian/收藏夹
+-o /Users/xuandao/Library/Mobile Documents/iCloud~md~obsidian/Documents/No.7/Resources/收藏夹
 ```
 
 生成文件：
 ```
-/Users/xuandao/Obsidian/收藏夹/2026-03-15-intro-to-rust.md
+/Users/xuandao/Library/Mobile Documents/iCloud~md~obsidian/Documents/No.7/Resources/收藏夹/2026-03-15-intro-to-rust.md
 ```
 
 ## 6. 验收检查（必做）
