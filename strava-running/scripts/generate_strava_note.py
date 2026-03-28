@@ -507,6 +507,121 @@ def infer_training_type_from_pace(splits, avg_pace_str=None):
     }
 
 
+def comprehensive_training_type_inference(
+    activity_name,
+    user_input=None,
+    distance_km=None,
+    duration_min=None,
+    avg_hr=None,
+    max_hr=None,
+    splits=None,
+    avg_pace_str=None
+):
+    """综合多因子推断训练类型
+
+    融合用户输入、活动名称、心率、配速、距离/时长等多个因子进行综合判断。
+
+    Args:
+        activity_name: 活动名称
+        user_input: 用户输入 (可选，优先级最高)
+        distance_km: 距离(公里) (可选)
+        duration_min: 时长(分钟) (可选)
+        avg_hr: 平均心率 (可选)
+        max_hr: 最大心率 (可选)
+        splits: 分段数据 (可选)
+        avg_pace_str: 平均配速字符串 (可选)
+
+    Returns:
+        dict: {
+            'training_type': 最终推断的训练类型,
+            'confidence': 综合置信度 ('high', 'medium', 'low'),
+            'reason': 综合推断原因,
+            'factors': 各因子推断结果,
+            'consensus': 各因子一致性
+        }
+    """
+    factors = {}
+    votes = {}
+
+    # 因子 1: 用户输入 (最高优先级)
+    if user_input:
+        user_type = get_training_type(activity_name, user_input)
+        factors['user_input'] = {
+            'type': user_type,
+            'confidence': 'high',
+            'reason': f'用户输入: "{user_input}"'
+        }
+        votes['user_input'] = user_type
+
+    # 因子 2: 活动名称分析
+    name_result = analyze_activity_name(activity_name, distance_km, duration_min)
+    factors['activity_name'] = name_result
+    votes['activity_name'] = name_result['training_type']
+
+    # 因子 3: 心率分析
+    if avg_hr and avg_hr != 'N/A':
+        hr_result = infer_training_type_from_hr(avg_hr, max_hr, duration_min)
+        factors['heart_rate'] = {
+            'type': hr_result['training_type'],
+            'confidence': hr_result['confidence'],
+            'reason': hr_result['reason'],
+            'zone_info': hr_result.get('zone_info')
+        }
+        votes['heart_rate'] = hr_result['training_type']
+
+    # 因子 4: 配速分析
+    if splits or (avg_pace_str and avg_pace_str != 'N/A'):
+        pace_result = infer_training_type_from_pace(splits or [], avg_pace_str)
+        factors['pace'] = {
+            'type': pace_result['training_type'],
+            'confidence': pace_result['confidence'],
+            'reason': pace_result['reason'],
+            'pace_analysis': pace_result.get('pace_analysis')
+        }
+        votes['pace'] = pace_result['training_type']
+
+    # 计算投票结果
+    from collections import Counter
+    vote_counts = Counter(votes.values())
+    most_common = vote_counts.most_common()
+
+    # 决策逻辑
+    # 1. 如果用户输入明确，直接使用
+    if 'user_input' in votes:
+        final_type = votes['user_input']
+        confidence = 'high'
+        reason = f"基于用户输入'{user_input}'确定"
+    # 2. 如果多数因子一致
+    elif most_common and most_common[0][1] >= 2:
+        final_type = most_common[0][0]
+        count = most_common[0][1]
+        total = len(votes)
+        confidence = 'high' if count >= 3 else 'medium'
+        reason = f"{count}/{total} 个因子推断为{final_type}"
+    # 3. 否则使用活动名称结果
+    else:
+        final_type = votes.get('activity_name', '轻松跑')
+        confidence = factors.get('activity_name', {}).get('confidence', 'low')
+        reason = "各因子不一致，基于活动名称推断"
+
+    # 检查一致性
+    unique_types = set(votes.values())
+    consensus = {
+        'agreement': len(unique_types) == 1,
+        'unique_types': list(unique_types),
+        'vote_distribution': dict(vote_counts)
+    }
+
+    return {
+        'training_type': final_type,
+        'confidence': confidence,
+        'reason': reason,
+        'factors': factors,
+        'votes': votes,
+        'consensus': consensus
+    }
+
+
 def analyze_progress(data, training_type, obsidian_path):
     """Analyze training progress"""
     type_folder = os.path.join(obsidian_path, TRAINING_TYPES[training_type]['folder'])
