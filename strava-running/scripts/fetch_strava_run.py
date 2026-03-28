@@ -7,8 +7,10 @@ Reads credentials from config file and generates GPX from streams.
 import os
 import sys
 import json
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from functools import wraps
 
 try:
     from stravalib.client import Client
@@ -17,6 +19,52 @@ try:
 except ImportError:
     print("❌ Please install required packages: pip3 install stravalib gpxpy", file=sys.stderr)
     sys.exit(1)
+
+
+# 超时和重试配置
+DEFAULT_TIMEOUT = 30  # 默认超时30秒
+MAX_RETRIES = 3  # 最大重试次数
+RETRY_DELAY = 2  # 重试间隔（秒）
+
+
+def retry_with_timeout(max_retries=MAX_RETRIES, delay=RETRY_DELAY):
+    """装饰器：为函数添加重试和超时机制"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exception = None
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+                    error_msg = str(e).lower()
+
+                    # 特定错误不重试
+                    if 'unauthorized' in error_msg or 'not found' in error_msg:
+                        raise
+
+                    if attempt < max_retries - 1:
+                        print(f"⚠️  {func.__name__} 失败 (尝试 {attempt + 1}/{max_retries}): {e}", file=sys.stderr)
+                        print(f"   等待 {delay} 秒后重试...", file=sys.stderr)
+                        time.sleep(delay)
+                    else:
+                        print(f"❌ {func.__name__} 最终失败: {e}", file=sys.stderr)
+            raise last_exception
+        return wrapper
+    return decorator
+
+
+def with_timeout(timeout=DEFAULT_TIMEOUT):
+    """装饰器：设置操作超时（注意：仅支持某些操作）"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            # Python 3.9+ 支持 timeout 参数
+            kwargs['timeout'] = timeout
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
 
 
 def parse_quantity(value):
@@ -55,6 +103,7 @@ def read_config():
     return config
 
 
+@retry_with_timeout(max_retries=MAX_RETRIES, delay=RETRY_DELAY)
 def authenticate_strava(config):
     """Authenticate with Strava using refresh token"""
     client = Client()
@@ -80,6 +129,7 @@ def authenticate_strava(config):
         sys.exit(1)
 
 
+@retry_with_timeout(max_retries=MAX_RETRIES, delay=RETRY_DELAY)
 def get_latest_run(client):
     """Get the latest running activity"""
     try:
@@ -110,6 +160,7 @@ def get_latest_run(client):
         sys.exit(1)
 
 
+@retry_with_timeout(max_retries=MAX_RETRIES, delay=RETRY_DELAY)
 def get_activity_streams(client, activity_id):
     """Get activity streams for GPX generation"""
     try:
@@ -221,6 +272,7 @@ def format_pace(meters_per_second):
     return f"{minutes}:{seconds:02d}"
 
 
+@retry_with_timeout(max_retries=MAX_RETRIES, delay=RETRY_DELAY)
 def get_activity_laps(client, activity_id):
     """Get activity laps (splits)"""
     try:
