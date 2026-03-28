@@ -116,6 +116,73 @@ def get_training_type(activity_name, user_input=None):
     return '轻松跑'  # Default
 
 
+def analyze_activity_name(activity_name, distance_km=None, duration_min=None):
+    """智能分析活动名称推断训练类型
+
+    除了关键词匹配外，还结合距离和时间特征进行推断。
+
+    Args:
+        activity_name: Strava 活动名称
+        distance_km: 距离(公里)
+        duration_min: 时长(分钟)
+
+    Returns:
+        dict: {
+            'training_type': 训练类型,
+            'confidence': 置信度 ('high', 'medium', 'low'),
+            'reason': 推断原因
+        }
+    """
+    name_lower = activity_name.lower()
+
+    # 首先使用关键词匹配
+    keywords = {
+        '间歇跑': ['interval', 'hiit', 'fartlek', '间歇', '变速'],
+        '节奏跑': ['tempo', 'threshold', '乳酸阈值', '节奏'],
+        'LSD': ['lsd', 'long run', '长距离'],
+        '轻松跑': ['easy', '轻松', 'jog'],
+        '恢复跑': ['recovery', '恢复', '放松'],
+        '跑步机': ['treadmill', '跑步机', 'indoor', '室内'],
+        '马拉松配速跑': ['marathon', '马拉松', 'race pace']
+    }
+
+    # 关键词匹配
+    for type_name, words in keywords.items():
+        if any(word in name_lower for word in words):
+            return {
+                'training_type': type_name,
+                'confidence': 'high',
+                'reason': f'活动名称包含关键词'
+            }
+
+    # 基于距离和时间的启发式推断
+    if distance_km and duration_min:
+        pace_min_per_km = duration_min / distance_km
+
+        # 长距离慢跑 (LSD): 距离 > 15km 或 时间 > 90分钟
+        if distance_km >= 15 or duration_min >= 90:
+            return {
+                'training_type': 'LSD',
+                'confidence': 'medium',
+                'reason': f'距离{distance_km}km/时长{duration_min}分钟符合LSD特征'
+            }
+
+        # 轻松跑: 配速较慢 (> 6:00/km) 或距离短 (< 5km)
+        if pace_min_per_km >= 6.0 or distance_km < 5:
+            return {
+                'training_type': '轻松跑',
+                'confidence': 'low',
+                'reason': f'配速{pace_min_per_km:.1f}min/km或距离较短'
+            }
+
+    # 默认
+    return {
+        'training_type': '轻松跑',
+        'confidence': 'low',
+        'reason': '无明确特征，默认轻松跑'
+    }
+
+
 def parse_pace(pace_str):
     """Parse pace string to seconds"""
     if pace_str == 'N/A' or not pace_str:
