@@ -56,16 +56,48 @@ TRAINING_TYPES = {
 
 
 def get_training_type(activity_name, user_input=None):
-    """Determine training type from user input or activity name"""
-    # 关键词映射（支持部分匹配）
+    """Determine training type from user input or activity name
+
+    支持多种自然语言输入方式，包括口语化表达和英文关键词。
+    用户输入优先级高于活动名称。
+    """
+    # 扩展关键词映射（支持部分匹配和同义词）
     keywords = {
-        '间歇跑': ['间歇', 'interval'],
-        '节奏跑': ['节奏', 'tempo'],
-        'LSD': ['lsd', '长距离'],
-        '轻松跑': ['轻松', 'easy'],
-        '恢复跑': ['恢复', 'recovery'],
-        '跑步机': ['跑步机', 'treadmill'],
-        '马拉松配速跑': ['马拉松', 'marathon pace'],
+        '间歇跑': [
+            '间歇', 'interval', 'hiit', '高强度',
+            '间歇训练', '跑间歇', '跑了个间歇',
+            '法特莱克', 'fartlek', '变速跑'
+        ],
+        '节奏跑': [
+            '节奏', 'tempo', '乳酸阈值', 'threshold',
+            '节奏训练', '跑节奏', 'tempo run',
+            '巡航间歇'
+        ],
+        'LSD': [
+            'lsd', '长距离', 'long run', 'lsd跑',
+            '长距离慢跑', 'lsd训练', '周末长距离',
+            'lsd长距离', '慢跑长距离'
+        ],
+        '轻松跑': [
+            '轻松跑', 'easy run', '有氧跑', '轻松慢跑',
+            '轻松训练', '有氧慢跑', 'easy jog',
+            '恢复性慢跑', '有氧基础'
+        ],
+        '恢复跑': [
+            '恢复', '放松', 'recovery', '休息跑', '放松跑',
+            '恢复训练', '恢复慢跑', 'recovery run',
+            '排酸跑', '放松慢跑', '休息恢复'
+        ],
+        '跑步机': [
+            '跑步机', 'treadmill', '室内跑', '室内训练',
+            '跑步机训练', '跑跑步机', 'treadmill run',
+            'gym跑', '健身房跑步'
+        ],
+        '马拉松配速跑': [
+            '马拉松', 'marathon pace', '马配', 'mp',
+            '马拉松配速', '比赛配速', 'race pace',
+            'marathon', '目标配速', 'goal pace'
+        ]
     }
 
     # 优先从用户输入检测
