@@ -57,27 +57,29 @@ TRAINING_TYPES = {
 
 def get_training_type(activity_name, user_input=None):
     """Determine training type from user input or activity name"""
+    # 关键词映射（支持部分匹配）
+    keywords = {
+        '间歇跑': ['间歇', 'interval'],
+        '节奏跑': ['节奏', 'tempo'],
+        'LSD': ['lsd', '长距离'],
+        '轻松跑': ['轻松', 'easy'],
+        '恢复跑': ['恢复', 'recovery'],
+        '跑步机': ['跑步机', 'treadmill'],
+        '马拉松配速跑': ['马拉松', 'marathon pace'],
+    }
+
+    # 优先从用户输入检测
     if user_input:
-        for type_name in TRAINING_TYPES.keys():
-            if type_name in user_input:
+        user_lower = user_input.lower()
+        for type_name, words in keywords.items():
+            if any(word in user_lower for word in words):
                 return type_name
 
-    # Guess from activity name
+    # 从活动名称检测
     activity_lower = activity_name.lower()
-    if '间歇' in activity_lower or 'interval' in activity_lower:
-        return '间歇跑'
-    elif '节奏' in activity_lower or 'tempo' in activity_lower:
-        return '节奏跑'
-    elif 'lsd' in activity_lower or '长距离' in activity_lower:
-        return 'LSD'
-    elif '轻松' in activity_lower or 'easy' in activity_lower:
-        return '轻松跑'
-    elif '恢复' in activity_lower or 'recovery' in activity_lower:
-        return '恢复跑'
-    elif '跑步机' in activity_lower or 'treadmill' in activity_lower:
-        return '跑步机'
-    elif '马拉松' in activity_lower or 'marathon' in activity_lower:
-        return '马拉松配速跑'
+    for type_name, words in keywords.items():
+        if any(word in activity_lower for word in words):
+            return type_name
 
     return '轻松跑'  # Default
 
