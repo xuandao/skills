@@ -338,6 +338,175 @@ def infer_training_type_from_hr(avg_hr, max_hr_activity, duration_min=None):
     }
 
 
+def analyze_pace_variation(splits):
+    """分析配速变化特征
+
+    Args:
+        splits: 分段数据列表，每项包含 'pace' 字段 (格式: "M:SS")
+
+    Returns:
+        dict: {
+            'avg_pace_sec': 平均配速(秒),
+            'pace_variance': 配速方差,
+            'pace_range': 配速范围(秒),
+            'is_consistent': 是否稳定,
+            'has_surges': 是否有加速,
+            'has_recoveries': 是否有恢复,
+            'pattern': 配速模式 ('steady', 'interval', 'progression', 'variable'),
+            'suggested_type': 建议训练类型
+        }
+    """
+    if not splits or len(splits) < 2:
+        return None
+
+    # 解析配速
+    pace_seconds = []
+    for split in splits:
+        pace_str = split.get('pace', 'N/A')
+        if pace_str != 'N/A':
+            try:
+                parts = pace_str.split(':')
+                if len(parts) == 2:
+                    seconds = int(parts[0]) * 60 + int(parts[1])
+                    pace_seconds.append(seconds)
+            except:
+                continue
+
+    if len(pace_seconds) < 2:
+        return None
+
+    # 计算统计量
+    import statistics
+    avg_pace = statistics.mean(pace_seconds)
+    min_pace = min(pace_seconds)
+    max_pace = max(pace_seconds)
+    pace_range = max_pace - min_pace
+
+    try:
+        pace_variance = statistics.stdev(pace_seconds)
+    except:
+        pace_variance = 0
+
+    # 分析配速模式
+    # 判断是否稳定 (方差 < 10秒)
+    is_consistent = pace_variance < 10
+
+    # 判断是否有间歇特征（有大起伏）
+    has_surges = pace_range > 30  # 配速差 > 30秒
+
+    # 判断是否有恢复段（配速较慢的段落）
+    slow_threshold = avg_pace + 15
+    has_recoveries = any(p > slow_threshold for p in pace_seconds)
+
+    # 判断是否有渐加速特征（每段越来越快）
+    progression_count = 0
+    for i in range(1, len(pace_seconds)):
+        if pace_seconds[i] < pace_seconds[i-1] - 5:  # 快5秒以上
+            progression_count += 1
+    is_progression = progression_count >= len(pace_seconds) // 2
+
+    # 确定配速模式
+    if is_consistent:
+        pattern = 'steady'
+        suggested_type = '节奏跑'
+        reason = '配速稳定，可能是节奏跑或马拉松配速跑'
+    elif has_surges and has_recoveries:
+        pattern = 'interval'
+        suggested_type = '间歇跑'
+        reason = f'配速变化大(范围{pace_range}秒)，有快有慢，符合间歇跑特征'
+    elif is_progression:
+        pattern = 'progression'
+        suggested_type = '节奏跑'
+        reason = '配速逐渐加快，可能是渐加速跑'
+    else:
+        pattern = 'variable'
+        suggested_type = '轻松跑'
+        reason = f'配速变化不规律(方差{pace_variance:.1f}秒)，可能是轻松跑'
+
+    return {
+        'avg_pace_sec': avg_pace,
+        'pace_variance': pace_variance,
+        'pace_range': pace_range,
+        'is_consistent': is_consistent,
+        'has_surges': has_surges,
+        'has_recoveries': has_recoveries,
+        'is_progression': is_progression,
+        'pattern': pattern,
+        'suggested_type': suggested_type,
+        'reason': reason,
+        'pace_data': pace_seconds
+    }
+
+
+def infer_training_type_from_pace(splits, avg_pace_str=None):
+    """基于配速数据推断训练类型
+
+    Args:
+        splits: 分段数据列表
+        avg_pace_str: 平均配速字符串 (可选)
+
+    Returns:
+        dict: {
+            'training_type': 推断的训练类型,
+            'confidence': 置信度,
+            'reason': 推断原因,
+            'pace_analysis': 配速分析详情
+        }
+    """
+    pace_analysis = analyze_pace_variation(splits)
+
+    if not pace_analysis:
+        # 没有分段数据，尝试从平均配速推断
+        if avg_pace_str and avg_pace_str != 'N/A':
+            try:
+                parts = avg_pace_str.split(':')
+                avg_pace_sec = int(parts[0]) * 60 + int(parts[1])
+
+                # 简单推断：快配速可能是间歇或节奏，慢配速可能是恢复
+                if avg_pace_sec < 300:  # < 5:00/km
+                    return {
+                        'training_type': '节奏跑',
+                        'confidence': 'low',
+                        'reason': f'平均配速较快({avg_pace_str})，可能是节奏跑或间歇跑',
+                        'pace_analysis': None
+                    }
+                elif avg_pace_sec > 400:  # > 6:40/km
+                    return {
+                        'training_type': '恢复跑',
+                        'confidence': 'low',
+                        'reason': f'平均配速较慢({avg_pace_str})，可能是恢复跑',
+                        'pace_analysis': None
+                    }
+            except:
+                pass
+
+        return {
+            'training_type': '轻松跑',
+            'confidence': 'low',
+            'reason': '无配速分段数据，默认轻松跑',
+            'pace_analysis': None
+        }
+
+    # 有配速分析结果
+    pattern = pace_analysis['pattern']
+    suggested_type = pace_analysis['suggested_type']
+
+    # 根据模式确定置信度
+    if pattern == 'interval':
+        confidence = 'high'
+    elif pattern == 'steady':
+        confidence = 'medium'
+    else:
+        confidence = 'low'
+
+    return {
+        'training_type': suggested_type,
+        'confidence': confidence,
+        'reason': pace_analysis['reason'],
+        'pace_analysis': pace_analysis
+    }
+
+
 def analyze_progress(data, training_type, obsidian_path):
     """Analyze training progress"""
     type_folder = os.path.join(obsidian_path, TRAINING_TYPES[training_type]['folder'])
