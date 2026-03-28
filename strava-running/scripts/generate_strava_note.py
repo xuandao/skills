@@ -217,7 +217,10 @@ def format_pace_diff(current, previous):
 
 
 def analyze_hr_zones(avg_hr, max_hr_activity):
-    """Analyze heart rate zones"""
+    """Analyze heart rate zones and infer training intensity
+
+    Returns zone information and training intensity inference.
+    """
     try:
         max_hr = int(max_hr_activity) if max_hr_activity and max_hr_activity != 'N/A' else 190
         avg_hr_int = int(avg_hr) if avg_hr and avg_hr != 'N/A' else None
@@ -225,30 +228,114 @@ def analyze_hr_zones(avg_hr, max_hr_activity):
         if not avg_hr_int:
             return None
 
+        # 计算心率区间边界
         z1 = max_hr * 0.5
         z2 = max_hr * 0.6
         z3 = max_hr * 0.7
         z4 = max_hr * 0.8
         z5 = max_hr * 0.9
 
+        # 确定平均心率所在区间
         if avg_hr_int < z2:
             zone = "Zone 1 (恢复/热身 - <60%)"
+            zone_num = 1
+            intensity = "低"
+            suggested_type = "恢复跑"
         elif avg_hr_int < z3:
             zone = "Zone 2 (轻松/有氧基础 - 60-70%)"
+            zone_num = 2
+            intensity = "低-中"
+            suggested_type = "轻松跑"
         elif avg_hr_int < z4:
             zone = "Zone 3 (马拉松配速/有氧进阶 - 70-80%)"
+            zone_num = 3
+            intensity = "中"
+            suggested_type = "马拉松配速跑"
         elif avg_hr_int < z5:
             zone = "Zone 4 (乳酸阈值/无氧 - 80-90%)"
+            zone_num = 4
+            intensity = "高"
+            suggested_type = "节奏跑"
         else:
             zone = "Zone 5 (极限/冲刺 - >90%)"
+            zone_num = 5
+            intensity = "极高"
+            suggested_type = "间歇跑"
 
         return {
             "estimated_max_hr": max_hr,
             "avg_zone": zone,
+            "zone_num": zone_num,
+            "intensity": intensity,
+            "suggested_type": suggested_type,
             "zones_breakdown": f"Z1(>{int(z1)}), Z2(>{int(z2)}), Z3(>{int(z3)}), Z4(>{int(z4)}), Z5(>{int(z5)})"
         }
     except:
         return None
+
+
+def infer_training_type_from_hr(avg_hr, max_hr_activity, duration_min=None):
+    """基于心率数据推断训练类型
+
+    Args:
+        avg_hr: 平均心率
+        max_hr_activity: 活动最大心率（用于估算最大心率）
+        duration_min: 活动时长（分钟），可选
+
+    Returns:
+        dict: {
+            'training_type': 推断的训练类型,
+            'confidence': 置信度 ('high', 'medium', 'low'),
+            'reason': 推断原因,
+            'zone_info': 心率区间信息
+        }
+    """
+    zone_info = analyze_hr_zones(avg_hr, max_hr_activity)
+
+    if not zone_info:
+        return {
+            'training_type': '轻松跑',
+            'confidence': 'low',
+            'reason': '无心率数据，默认轻松跑',
+            'zone_info': None
+        }
+
+    zone_num = zone_info['zone_num']
+    suggested_type = zone_info['suggested_type']
+    intensity = zone_info['intensity']
+
+    # 结合时长进行更精确的判断
+    if duration_min:
+        if zone_num >= 4 and duration_min < 30:
+            # 高心率但短时长 - 可能是间歇跑
+            confidence = 'high'
+            reason = f"心率区间Z{zone_num}({intensity})且时长{duration_min}分钟，符合间歇跑特征"
+        elif zone_num == 3 and duration_min >= 60:
+            # 中等心率且长时长 - 可能是马拉松配速跑或LSD
+            if duration_min >= 90:
+                confidence = 'medium'
+                suggested_type = 'LSD'
+                reason = f"心率区间Z{zone_num}且时长{duration_min}分钟，可能是LSD"
+            else:
+                confidence = 'medium'
+                reason = f"心率区间Z{zone_num}({intensity})且时长{duration_min}分钟，可能是马拉松配速跑"
+        elif zone_num <= 2 and duration_min >= 60:
+            # 低心率且长时长 - 恢复跑或轻松跑
+            confidence = 'medium'
+            reason = f"心率区间Z{zone_num}({intensity})且时长较长，适合恢复"
+        else:
+            confidence = 'medium'
+            reason = f"心率区间Z{zone_num}({intensity})，建议{suggested_type}"
+    else:
+        confidence = 'medium'
+        reason = f"心率区间Z{zone_num}({intensity})，建议{suggested_type}"
+
+    return {
+        'training_type': suggested_type,
+        'confidence': confidence,
+        'reason': reason,
+        'zone_info': zone_info
+    }
 
 
 def analyze_progress(data, training_type, obsidian_path):
